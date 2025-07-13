@@ -1,71 +1,55 @@
 import streamlit as st
 import pandas as pd
-from federated_learning import FederatedLearning
-import shap
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.metrics import accuracy_score
+from models.model_code import preprocess_data, create_logistic_regression_model, train_logistic_regression_model
+from models.federated_learning import FederatedLearning
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.utils import to_categorical
+from models.model_code import preprocess_data, create_logistic_regression_model, train_logistic_regression_model
+from models.federated_learning import FederatedLearning
 
-# Streamlit UI: upload CSV file
-def app():
-    st.title("Federated Learning with Logistic Regression")
+# Streamlit UI
+st.title("Federated Learning with Logistic Regression")
 
-    # Upload CSV file
-    uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        st.write("Dataset loaded with shape:", df.shape)
-        
-        # Preprocess data
-        X_train, X_test, y_train, y_test, label_classes = preprocess_data(df)
-        
-        # Initialize Federated Learning
-        federated_learning = FederatedLearning(X_train, y_train, X_test, y_test)
-        
-        # Train the model using Federated Learning
-        global_model = federated_learning.train()
-        
-        # SHAP analysis
-        explain_with_shap(global_model, X_train, X_test)
-        
-        st.write("Global model training completed. SHAP analysis visualized above.")
+# File uploader for dataset
+uploaded_file = st.file_uploader("Upload Dataset", type=["csv"])
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    st.write("Dataset Loaded", df.head())
 
-# Preprocess data (same function as explained earlier)
-def preprocess_data(df):
-    attack_mapping = {
-        'DDoS': ['DDoS-ICMP_Flood', 'DDoS-UDP_Flood', 'DDoS-TCP_Flood'],
-        'DoS': ['DoS-UDP_Flood', 'DoS-TCP_Flood', 'DoS-SYN_Flood'],
-        'Mirai': ['Mirai-greeth_flood', 'Mirai-udpplain'],
-        'Recon': ['Recon-HostDiscovery', 'Recon-PortScan'],
-        'Other': ['MITM-ArpSpoofing', 'DNS_Spoofing', 'Backdoor_Malware'],
-        'Benign': ['Normal']
-    }
+    # Preprocess the dataset
+    df_final = preprocess_data(df)
+    st.write("Preprocessed Data", df_final.head())
 
-    reverse_mapping = {}
-    for attack_type, attacks in attack_mapping.items():
-        for attack in attacks:
-            reverse_mapping[attack] = attack_type
+    # Split the dataset into features (X) and labels (y)
+    y = df_final['label']
+    X = df_final.drop('label', axis=1)
     
-    df['label'] = df['label'].map(reverse_mapping).fillna('Other')
-    
-    X = df.drop(columns=['label'])
-    y = df['label']
-    
-    # Scale features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    # Encode labels
+    # Label Encoding and One-Hot Encoding
     encoder = LabelEncoder()
-    y_encoded = encoder.fit_transform(y)
+    y = encoder.fit_transform(y)
+    num_classes = len(np.unique(y))
+    y = to_categorical(y)
 
-    # Split data into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y_encoded, test_size=0.2, random_state=42)
-    
-    return X_train, X_test, y_train, y_test, encoder.classes_
+    # Train/Test Split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=87)
+    st.write(f"Training Data Shape: {X_train.shape}")
+    st.write(f"Test Data Shape: {X_test.shape}")
 
-# SHAP Explanation (Same logic as in the notebook)
-def explain_with_shap(model, X_train, X_test):
-    explainer = shap.KernelExplainer(model.predict_proba, X_train[:100])  # Sample for faster computation
-    shap_values = explainer.shap_values(X_test[:100])  # First 100 test samples
-    shap.summary_plot(shap_values, X_test[:100])
+    # Choose model for training
+    if st.button("Train Logistic Regression Model"):
+        # Create and train logistic regression model
+        model = create_logistic_regression_model(X_train.shape[1], num_classes)
+        accuracy = train_logistic_regression_model(X_train, y_train, X_test, y_test, model)
+        st.write(f"Model Accuracy: {accuracy:.4f}")
+
+    # Federated Learning Button (implement training)
+    if st.button("Start Federated Learning"):
+        # Initialize Federated Learning with 4 clients
+        fl = FederatedLearning(num_clients=4, input_dim=X_train.shape[1], num_classes=num_classes, client_epochs=5, rounds=5)
+        
+        # Start Federated Learning
+        global_model = fl.train(X_train, y_train, X_test, y_test)
+        st.write("Federated Learning Completed")
+        st.write("Global Model Accuracy:", fl.evaluate_global_model(X_test, y_test))
